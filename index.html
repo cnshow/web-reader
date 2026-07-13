@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>開卷 · 本地文件閱讀器</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@400;600;900&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EFF1EF; --surface:#FFFFFF; --ink:#22272B; --muted:#66707A;
+  --accent:#2E6E5E; --accent-ink:#FFFFFF; --accent-soft:#DCEAE4;
+  --border:#DDE2DF; --shadow:0 1px 3px rgba(20,30,26,.08);
+  --font-ui:'Noto Sans TC',-apple-system,'PingFang TC','Microsoft JhengHei',sans-serif;
+  --font-read:'Noto Serif TC','PMingLiU',Georgia,serif;
+}
+html[data-theme="dark"]{
+  --bg:#15181B; --surface:#1E2226; --ink:#E8E6E1; --muted:#98A2AB;
+  --accent:#86C5AF; --accent-ink:#12211C; --accent-soft:#24332E;
+  --border:#2C3237; --shadow:0 1px 3px rgba(0,0,0,.4);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none!important}
+html,body{height:100%}
+body{
+  font-family:var(--font-ui); background:var(--bg); color:var(--ink);
+  display:flex; flex-direction:column; overflow:hidden;
+  transition:background .25s,color .25s;
+}
+button,select,input{font-family:inherit;font-size:14px;color:inherit}
+button{cursor:pointer;background:none;border:none}
+
+/* ── 頂欄 ─────────────────────────── */
+#topbar{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);
+  flex-wrap:wrap;
+}
+.brand{display:flex;align-items:center;gap:10px}
+.brand-mark{
+  width:38px;height:38px;display:grid;place-items:center;
+  background:var(--accent);color:var(--accent-ink);border-radius:8px;
+  font-family:var(--font-read);font-weight:900;font-size:20px;
+}
+.brand h1{font-family:var(--font-read);font-size:18px;font-weight:900;letter-spacing:.15em}
+.brand p{font-size:11px;color:var(--muted);letter-spacing:.1em}
+.controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ctl{
+  padding:7px 12px;border:1px solid var(--border);border-radius:8px;
+  background:var(--surface);transition:background .15s,border-color .15s;
+}
+.ctl:hover{background:var(--accent-soft);border-color:var(--accent)}
+.ctl:focus-visible,select:focus-visible,.open-btn:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.seg{display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.seg button{padding:7px 12px;background:var(--surface)}
+.seg button:hover{background:var(--accent-soft)}
+.seg button+button{border-left:1px solid var(--border)}
+select.ctl{appearance:none;padding-right:26px;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 14px) 55%,calc(100% - 10px) 55%;background-size:4px 4px;background-repeat:no-repeat}
+.open-btn{
+  display:inline-flex;align-items:center;padding:8px 16px;border-radius:8px;
+  background:var(--accent);color:var(--accent-ink);font-weight:500;cursor:pointer;
+  box-shadow:var(--shadow);
+}
+.open-btn:hover{filter:brightness(1.08)}
+
+/* ── 主版面 ───────────────────────── */
+#layout{flex:1;display:flex;min-height:0;position:relative}
+#sidebar{
+  width:270px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);
+  overflow-y:auto;display:none;
+}
+#sidebar.open{display:block}
+.side-head{
+  padding:14px 16px 8px;font-size:12px;color:var(--muted);letter-spacing:.2em;
+  border-bottom:1px solid var(--border);
+}
+#tocList{padding:8px 0}
+#tocList a{
+  display:block;padding:8px 16px;color:var(--ink);text-decoration:none;
+  font-size:13.5px;line-height:1.45;border-left:3px solid transparent;
+}
+#tocList a:hover{background:var(--accent-soft)}
+#tocList a.lv2{padding-left:32px;color:var(--muted)}
+#tocList a.lv3{padding-left:48px;color:var(--muted);font-size:12.5px}
+#tocList .empty-toc{padding:16px;color:var(--muted);font-size:13px}
+
+#viewerShell{flex:1;position:relative;display:flex;min-width:0}
+#viewer{flex:1;overflow:auto;position:relative;scroll-behavior:smooth;min-width:0}
+
+/* 空狀態（拖放區）── 直排書名為視覺主軸 */
+#emptyState{
+  height:100%;display:flex;align-items:center;justify-content:center;gap:48px;
+  padding:24px;
+}
+#emptyState .vertical-title{
+  writing-mode:vertical-rl;font-family:var(--font-read);font-weight:900;
+  font-size:clamp(56px,10vw,104px);letter-spacing:.3em;color:var(--ink);
+  border-right:3px solid var(--accent);padding-right:20px;user-select:none;
+}
+#emptyState .drop-card{max-width:360px}
+#emptyState .drop-card h2{font-family:var(--font-read);font-size:20px;margin-bottom:10px}
+#emptyState .drop-card p{color:var(--muted);font-size:14px;line-height:1.8;margin-bottom:16px}
+#emptyState .fmt{display:flex;gap:8px;flex-wrap:wrap}
+#emptyState .fmt span{
+  padding:4px 10px;border:1px solid var(--border);border-radius:99px;
+  font-size:12px;color:var(--muted);letter-spacing:.05em;
+}
+body.dragging #viewer{outline:3px dashed var(--accent);outline-offset:-8px}
+
+/* PDF */
+#pdfWrap{display:flex;justify-content:center;padding:24px 16px}
+#pdfCanvas{box-shadow:0 4px 20px rgba(0,0,0,.18);border-radius:2px;background:#fff}
+
+/* EPUB */
+#epubWrap{height:100%;background:var(--surface)}
+
+/* TXT / MD */
+#docWrap{display:flex;justify-content:center;padding:32px 20px 80px}
+#docContent{
+  max-width:720px;width:100%;font-family:var(--font-read);
+  font-size:var(--read-size,18px);line-height:2;color:var(--ink);
+}
+#docContent p{margin-bottom:1em}
+#docContent h1,#docContent h2,#docContent h3,#docContent h4{
+  font-weight:900;margin:1.6em 0 .8em;line-height:1.5;scroll-margin-top:20px;
+}
+#docContent h1{font-size:1.7em;border-bottom:2px solid var(--accent);padding-bottom:.3em}
+#docContent h2{font-size:1.4em}
+#docContent h3{font-size:1.2em}
+#docContent a{color:var(--accent)}
+#docContent code{font-family:ui-monospace,monospace;font-size:.85em;background:var(--accent-soft);padding:2px 5px;border-radius:4px}
+#docContent pre{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;overflow-x:auto;margin-bottom:1em;line-height:1.6}
+#docContent pre code{background:none;padding:0}
+#docContent blockquote{border-left:3px solid var(--accent);padding-left:14px;color:var(--muted);margin-bottom:1em}
+#docContent ul,#docContent ol{padding-left:1.6em;margin-bottom:1em}
+#docContent img{max-width:100%}
+#docContent table{border-collapse:collapse;margin-bottom:1em;width:100%}
+#docContent th,#docContent td{border:1px solid var(--border);padding:6px 10px;font-size:.9em}
+#docContent hr{border:none;border-top:1px solid var(--border);margin:2em 0}
+
+/* 沉浸閱讀模式：隱藏所有工具列，只留內容 */
+body.zen #topbar, body.zen #statusbar, body.zen .pagenav{display:none}
+
+/* 翻頁按鈕 */
+.tapzone{position:absolute;top:0;bottom:0;width:33.33%;z-index:4;display:none;background:transparent}
+#tapPrev{left:0}
+#tapNext{right:0}
+@media (pointer:coarse){ .tapzone:not([hidden]){display:block} }
+.pagenav{
+  position:absolute;top:50%;transform:translateY(-50%);z-index:5;
+  width:42px;height:64px;border-radius:10px;font-size:24px;
+  background:var(--surface);border:1px solid var(--border);color:var(--muted);
+  box-shadow:var(--shadow);opacity:.75;transition:opacity .15s;
+}
+.pagenav:hover{opacity:1;color:var(--accent)}
+#navPrev{left:12px}
+#navNext{right:12px}
+
+/* ── 狀態列 ───────────────────────── */
+#statusbar{
+  display:flex;flex-direction:column;gap:6px;padding:8px 16px;
+  background:var(--surface);border-top:1px solid var(--border);
+  font-size:12.5px;color:var(--muted);
+}
+#seekBar{width:100%;accent-color:var(--accent);margin:0;display:block;cursor:pointer;height:18px}
+#seekBar:disabled{opacity:.4;cursor:default}
+#statusRow{display:flex;align-items:center;gap:16px;flex-wrap:wrap;width:100%}
+#fileLabel{flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#pageCtrl{display:flex;align-items:center;gap:6px}
+#pageInput{
+  width:56px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;
+  background:var(--bg);text-align:center;
+}
+#toast{
+  position:fixed;bottom:56px;left:50%;transform:translateX(-50%);
+  background:var(--ink);color:var(--bg);padding:9px 18px;border-radius:99px;
+  font-size:13px;opacity:0;pointer-events:none;transition:opacity .3s;z-index:99;
+}
+#toast.show{opacity:.95}
+
+@media (max-width:720px){
+  /* 頂欄壓成一行：隱藏商標騰出空間 */
+  #topbar{flex-wrap:nowrap;padding:8px 10px;gap:8px}
+  .brand{display:none}
+  .controls{flex-wrap:nowrap;overflow-x:auto;gap:6px;scrollbar-width:none;flex:1;justify-content:space-between}
+  .controls::-webkit-scrollbar{display:none}
+  .ctl,.seg button{padding:6px 9px;font-size:13px;white-space:nowrap}
+  select.ctl{padding-right:22px}
+  .open-btn{padding:7px 11px;font-size:13px;white-space:nowrap;flex-shrink:0}
+  /* 翻頁按鈕移到底部角落，不遮內文 */
+  .pagenav{
+    top:auto;bottom:14px;transform:none;
+    width:44px;height:44px;border-radius:50%;font-size:20px;
+    display:grid;place-items:center;opacity:.9;
+  }
+  #navPrev{left:14px}
+  #navNext{right:14px}
+  #sidebar{position:absolute;inset:0 auto 0 0;z-index:10;box-shadow:4px 0 16px rgba(0,0,0,.15)}
+  #emptyState{flex-direction:column;gap:28px;text-align:center}
+  #emptyState .vertical-title{writing-mode:horizontal-tb;border-right:none;border-bottom:3px solid var(--accent);padding:0 0 12px}
+  #emptyState .fmt{justify-content:center}
+}
+@media (prefers-reduced-motion:reduce){
+  *{transition:none!important}
+  #viewer{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand">
+    <span class="brand-mark">卷</span>
+    <div><h1>開卷</h1><p>本地文件閱讀器 · PDF / EPUB / TXT / MD</p></div>
+  </div>
+  <div class="controls">
+    <button id="tocBtn" class="ctl" title="顯示或隱藏目錄">目錄</button>
+    <div class="seg" role="group" aria-label="字體大小">
+      <button id="fontDec" title="縮小字體">A−</button>
+      <button id="fontInc" title="放大字體">A＋</button>
+    </div>
+    <select id="ccSelect" class="ctl" title="簡繁轉換（不支援 PDF）">
+      <option value="off">原文</option>
+      <option value="t">簡→繁</option>
+      <option value="s">繁→簡</option>
+    </select>
+    <button id="themeBtn" class="ctl" title="切換深色模式">深色</button>
+    <label class="open-btn">開啟檔案
+      <input type="file" id="fileInput" hidden accept=".pdf,.epub,.txt,.md,.markdown">
+    </label>
+  </div>
+</header>
+
+<div id="layout">
+  <aside id="sidebar" aria-label="目錄">
+    <div class="side-head">目 錄</div>
+    <nav id="tocList"></nav>
+  </aside>
+  <main id="viewerShell">
+    <div id="viewer">
+      <div id="emptyState">
+        <div class="vertical-title">開卷有益</div>
+        <div class="drop-card">
+          <h2>把檔案拖進來，或點右上「開啟檔案」</h2>
+          <p>所有檔案皆在你的瀏覽器本地解析，不會上傳到任何伺服器。閱讀進度會自動記憶，下次開啟同一檔案可接續閱讀。</p>
+          <div class="fmt"><span>PDF</span><span>EPUB</span><span>TXT</span><span>Markdown</span></div>
+        </div>
+      </div>
+      <div id="pdfWrap" hidden><canvas id="pdfCanvas"></canvas></div>
+      <div id="epubWrap" hidden></div>
+      <article id="docWrap" hidden><div id="docContent"></div></article>
+    </div>
+    <div id="tapPrev" class="tapzone" hidden aria-hidden="true"></div>
+    <div id="tapNext" class="tapzone" hidden aria-hidden="true"></div>
+    <button id="navPrev" class="pagenav" hidden aria-label="上一頁">‹</button>
+    <button id="navNext" class="pagenav" hidden aria-label="下一頁">›</button>
+  </main>
+</div>
+
+<footer id="statusbar">
+  <input id="seekBar" type="range" min="0" max="1000" value="0" hidden aria-label="快速跳轉">
+  <div id="statusRow">
+    <span id="fileLabel">尚未開啟檔案</span>
+    <div id="pageCtrl" hidden>
+      <span>第</span><input id="pageInput" type="number" min="1"><span id="pageTotal">/ –</span><span>頁</span>
+    </div>
+    <span id="progLabel"></span>
+  </div>
+</footer>
+<div id="toast" role="status"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+<script>
+/* ═══════════════ 開卷 · 核心邏輯 ═══════════════ */
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+/* ── 安全的 localStorage（沙盒環境自動降級為記憶體） ── */
+const store = (() => {
+  let mem = {};
+  try {
+    localStorage.setItem('__t', '1'); localStorage.removeItem('__t');
+    return {
+      get: k => localStorage.getItem(k),
+      set: (k, v) => localStorage.setItem(k, v),
+    };
+  } catch (e) {
+    return { get: k => mem[k] ?? null, set: (k, v) => { mem[k] = v; } };
+  }
+})();
+
+/* ── 全域狀態 ── */
+const S = {
+  type: null, fileKey: null,
+  fontSize: parseInt(store.get('reader:fontSize')) || 18,
+  ccMode: 'off',
+  tocItems: [],                // 目錄原始項目（供簡繁轉換重繪）
+  rawText: '',                 // TXT / MD 原始內容
+  pdf: { doc: null, page: 1, total: 0, zoom: 1 },
+  book: null, rendition: null,
+};
+
+/* ── DOM ── */
+const $ = id => document.getElementById(id);
+const viewer = $('viewer'), emptyState = $('emptyState'),
+  pdfWrap = $('pdfWrap'), pdfCanvas = $('pdfCanvas'),
+  epubWrap = $('epubWrap'), docWrap = $('docWrap'), docContent = $('docContent'),
+  tocList = $('tocList'), sidebar = $('sidebar'),
+  navPrev = $('navPrev'), navNext = $('navNext'),
+  fileLabel = $('fileLabel'), pageCtrl = $('pageCtrl'),
+  pageInput = $('pageInput'), pageTotal = $('pageTotal'), progLabel = $('progLabel'),
+  seekBar = $('seekBar');
+
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2400);
+}
+const debounce = (fn, ms) => { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms); }; };
+
+/* ═══════════════ 主題（深色模式） ═══════════════ */
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $('themeBtn').textContent = theme === 'dark' ? '淺色' : '深色';
+  store.set('reader:theme', theme);
+  if (S.rendition) {
+    S.rendition.themes.select(theme);
+  }
+}
+$('themeBtn').addEventListener('click', () =>
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+applyTheme(store.get('reader:theme') || 'light');
+
+/* ═══════════════ 字體大小 / PDF 縮放 ═══════════════ */
+function applyFontSize() {
+  docContent.style.fontSize = S.fontSize + 'px';
+  store.set('reader:fontSize', S.fontSize);
+  if (S.rendition) S.rendition.themes.fontSize(S.fontSize + 'px');
+}
+function stepSize(dir) {
+  if (S.type === 'pdf') {
+    S.pdf.zoom = Math.min(3, Math.max(0.5, S.pdf.zoom + dir * 0.15));
+    renderPdfPage(S.pdf.page);
+    toast('縮放 ' + Math.round(S.pdf.zoom * 100) + '%');
+  } else {
+    S.fontSize = Math.min(32, Math.max(12, S.fontSize + dir * 1));
+    applyFontSize();
+    toast('字體 ' + S.fontSize + 'px');
+  }
+}
+$('fontInc').addEventListener('click', () => stepSize(1));
+$('fontDec').addEventListener('click', () => stepSize(-1));
+applyFontSize();
+
+/* ═══════════════ 目錄側欄 ═══════════════ */
+$('tocBtn').addEventListener('click', () => sidebar.classList.toggle('open'));
+function setToc(items) {
+  S.tocItems = items || [];
+  renderToc();
+}
+function renderToc() {
+  const items = S.tocItems;
+  tocList.innerHTML = '';
+  if (!items || !items.length) {
+    tocList.innerHTML = '<div class="empty-toc">此文件沒有目錄資訊</div>';
+    return;
+  }
+  const conv = (S.ccMode !== 'off' && ccReady);
+  items.forEach(it => {
+    const a = document.createElement('a');
+    a.href = '#'; a.textContent = conv ? ccConvert(it.label) : it.label;
+    if (it.level === 2) a.className = 'lv2';
+    if (it.level >= 3) a.className = 'lv3';
+    a.addEventListener('click', e => {
+      e.preventDefault(); it.go();
+      if (window.innerWidth <= 720) sidebar.classList.remove('open');
+    });
+    tocList.appendChild(a);
+  });
+}
+
+/* ═══════════════ 進度記憶 ═══════════════ */
+const saveProgress = data => { if (S.fileKey) store.set(S.fileKey, JSON.stringify(data)); };
+const loadProgress = () => { try { return JSON.parse(store.get(S.fileKey)) || null; } catch (e) { return null; } };
+
+/* ═══════════════ 開啟檔案（入口） ═══════════════ */
+$('fileInput').addEventListener('change', e => { if (e.target.files[0]) openFile(e.target.files[0]); e.target.value = ''; });
+['dragover', 'dragenter'].forEach(ev => window.addEventListener(ev, e => { e.preventDefault(); document.body.classList.add('dragging'); }));
+['dragleave', 'drop'].forEach(ev => window.addEventListener(ev, e => { e.preventDefault(); document.body.classList.remove('dragging'); }));
+window.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) openFile(f); });
+
+function resetViewer() {
+  if (S.rendition) { try { S.rendition.destroy(); } catch (e) {} }
+  if (S.book) { try { S.book.destroy(); } catch (e) {} }
+  S.rendition = S.book = S.pdf.doc = null;
+  emptyState.hidden = true;
+  pdfWrap.hidden = epubWrap.hidden = docWrap.hidden = true;
+  navPrev.hidden = navNext.hidden = pageCtrl.hidden = true;
+  tapPrev.hidden = tapNext.hidden = true;
+  epubWrap.innerHTML = ''; docContent.innerHTML = '';
+  progLabel.textContent = ''; setToc([]);
+  seekBar.hidden = true; seekBar.disabled = false; seekBar.value = 0;
+  viewer.scrollTop = 0;
+}
+
+async function openFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  const map = { pdf: 'pdf', epub: 'epub', txt: 'txt', md: 'md', markdown: 'md' };
+  if (!map[ext]) { toast('不支援的格式：' + ext); return; }
+  resetViewer();
+  S.type = map[ext];
+  S.fileKey = 'reader:pos:' + file.name + ':' + file.size;
+  fileLabel.textContent = file.name;
+  fileLabel.title = file.name;
+  try {
+    if (S.type === 'pdf') await openPdf(file);
+    else if (S.type === 'epub') await openEpub(file);
+    else await openText(file, S.type);
+  } catch (err) {
+    console.error(err);
+    toast('開啟失敗：' + (err.message || '檔案可能已損壞'));
+    emptyState.hidden = false;
+  }
+}
+
+/* ═══════════════ PDF ═══════════════ */
+async function openPdf(file) {
+  const buf = await file.arrayBuffer();
+  const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+  S.pdf.doc = doc; S.pdf.total = doc.numPages; S.pdf.zoom = 1;
+  pdfWrap.hidden = false; navPrev.hidden = navNext.hidden = false; pageCtrl.hidden = false;
+  tapPrev.hidden = tapNext.hidden = false;
+  pageTotal.textContent = '/ ' + doc.numPages;
+  pageInput.max = doc.numPages;
+  seekBar.min = 1; seekBar.max = doc.numPages; seekBar.hidden = false;
+
+  const saved = loadProgress();
+  S.pdf.page = (saved && saved.page >= 1 && saved.page <= doc.numPages) ? saved.page : 1;
+  if (saved && saved.page > 1) toast('已回到上次閱讀的第 ' + saved.page + ' 頁');
+  await renderPdfPage(S.pdf.page);
+  buildPdfToc(doc);
+}
+
+async function renderPdfPage(num) {
+  const doc = S.pdf.doc; if (!doc) return;
+  num = Math.min(S.pdf.total, Math.max(1, num));
+  S.pdf.page = num;
+  const page = await doc.getPage(num);
+  const base = page.getViewport({ scale: 1 });
+  const availW = Math.max(280, viewer.clientWidth - 48);
+  const scale = (availW / base.width) * S.pdf.zoom;
+  const vp = page.getViewport({ scale });
+  const dpr = window.devicePixelRatio || 1;
+  pdfCanvas.width = Math.floor(vp.width * dpr);
+  pdfCanvas.height = Math.floor(vp.height * dpr);
+  pdfCanvas.style.width = vp.width + 'px';
+  pdfCanvas.style.height = vp.height + 'px';
+  const ctx = pdfCanvas.getContext('2d');
+  await page.render({ canvasContext: ctx, viewport: vp, transform: [dpr, 0, 0, dpr, 0, 0] }).promise;
+  pageInput.value = num;
+  seekBar.value = num;
+  progLabel.textContent = Math.round(num / S.pdf.total * 100) + '%';
+  viewer.scrollTop = 0;
+  saveProgress({ page: num });
+}
+
+async function buildPdfToc(doc) {
+  const outline = await doc.getOutline().catch(() => null);
+  if (!outline) { setToc([]); return; }
+  const items = [];
+  const walk = (nodes, level) => nodes.forEach(n => {
+    items.push({
+      label: n.title, level,
+      go: async () => {
+        try {
+          let dest = n.dest;
+          if (typeof dest === 'string') dest = await doc.getDestination(dest);
+          if (dest && dest[0]) {
+            const idx = await doc.getPageIndex(dest[0]);
+            renderPdfPage(idx + 1);
+          }
+        } catch (e) { toast('無法跳轉到此章節'); }
+      },
+    });
+    if (n.items && n.items.length && level < 3) walk(n.items, level + 1);
+  });
+  walk(outline, 1);
+  setToc(items);
+}
+
+pageInput.addEventListener('change', () => { const n = parseInt(pageInput.value); if (n) renderPdfPage(n); });
+window.addEventListener('resize', debounce(() => { if (S.type === 'pdf' && S.pdf.doc) renderPdfPage(S.pdf.page); }, 250));
+
+/* ═══════════════ EPUB ═══════════════ */
+
+/* 自動修復：EPUB 章節須為格式嚴謹的 XHTML，網路流傳的書常有標籤錯誤導致無法渲染。
+   這裡先解壓檢查每一章，壞掉的用寬鬆 HTML 解析器重建為合法 XHTML，再重新打包。 */
+async function repairEpub(buf) {
+  const zip = await JSZip.loadAsync(buf);
+  const entries = [];
+  zip.forEach((path, entry) => {
+    if (!entry.dir && /\.x?html?$/i.test(path)) entries.push({ path, entry });
+  });
+  let fixed = 0;
+  for (const { path, entry } of entries) {
+    const text = await entry.async('string');
+    const strict = new DOMParser().parseFromString(text, 'application/xhtml+xml');
+    if (!strict.getElementsByTagName('parsererror').length) continue;  // 這章沒問題
+    const doc = new DOMParser().parseFromString(text, 'text/html');    // 寬鬆解析
+    doc.documentElement.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+    const out = '<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE html>\n'
+      + new XMLSerializer().serializeToString(doc.documentElement);
+    zip.file(path, out);
+    fixed++;
+  }
+  if (!fixed) return { buf, fixed: 0 };
+  const newBuf = await zip.generateAsync({ type: 'arraybuffer' });
+  return { buf: newBuf, fixed };
+}
+
+async function openEpub(file) {
+  let buf = await file.arrayBuffer();
+  try {
+    const r = await repairEpub(buf);
+    buf = r.buf;
+    if (r.fixed) toast('已自動修復 ' + r.fixed + ' 個章節的格式問題');
+  } catch (e) { console.warn('修復略過：', e); }
+  const book = ePub(buf);
+  S.book = book;
+  epubWrap.hidden = false; navPrev.hidden = navNext.hidden = false;
+  tapPrev.hidden = tapNext.hidden = false;
+  seekBar.min = 0; seekBar.max = 1000; seekBar.value = 0;
+  seekBar.hidden = false; seekBar.disabled = true;   // 定位資料算好後啟用
+
+  const rendition = book.renderTo(epubWrap, {
+    width: '100%', height: '100%', flow: 'paginated', spread: 'none', allowScriptedContent: false,
+  });
+  S.rendition = rendition;
+  rendition.themes.register('light', { body: { color: '#22272B', background: '#FFFFFF' } });
+  rendition.themes.register('dark', { body: { color: '#E8E6E1', background: '#1E2226' } });
+  rendition.themes.select(document.documentElement.dataset.theme);
+  rendition.themes.fontSize(S.fontSize + 'px');
+
+  // 內容載入時套用簡繁轉換 + 中間點按切換沉浸模式（EPUB 內容在 iframe 中，需在內部監聽）
+  rendition.hooks.content.register(contents => {
+    if (S.ccMode !== 'off' && ccReady) convertDom(contents.document.body);
+    bindMidTap(contents.document);
+  });
+
+  const saved = loadProgress();
+  await rendition.display(saved && saved.cfi ? saved.cfi : undefined);
+  if (saved && saved.cfi) toast('已回到上次閱讀位置');
+
+  rendition.on('relocated', loc => {
+    saveProgress({ cfi: loc.start.cfi });
+    if (book.locations && book.locations.length()) {
+      const pct = book.locations.percentageFromCfi(loc.start.cfi);
+      progLabel.textContent = Math.round(pct * 100) + '%';
+      seekBar.value = Math.round(pct * 1000);
+    }
+  });
+  book.ready.then(() => book.locations.generate(1000))
+    .then(() => { seekBar.disabled = false; })
+    .catch(() => {});
+
+  book.loaded.navigation.then(nav => {
+    const items = [];
+    const walk = (arr, level) => arr.forEach(it => {
+      items.push({ label: it.label.trim(), level, go: () => rendition.display(it.href) });
+      if (it.subitems && it.subitems.length && level < 3) walk(it.subitems, level + 1);
+    });
+    walk(nav.toc, 1);
+    setToc(items);
+  });
+}
+
+/* ═══════════════ TXT / Markdown ═══════════════ */
+async function openText(file, kind) {
+  S.rawText = await file.text();
+  docWrap.hidden = false;
+  seekBar.min = 0; seekBar.max = 1000; seekBar.hidden = false;
+  renderTextContent();
+  const saved = loadProgress();
+  if (saved && saved.ratio > 0.01) {
+    requestAnimationFrame(() => {
+      viewer.scrollTop = saved.ratio * (viewer.scrollHeight - viewer.clientHeight);
+      toast('已回到上次閱讀位置（' + Math.round(saved.ratio * 100) + '%）');
+    });
+  }
+}
+
+function renderTextContent() {
+  let text = S.rawText;
+  if (S.ccMode !== 'off' && ccReady) text = ccConvert(text);
+  if (S.type === 'md') {
+    docContent.innerHTML = DOMPurify.sanitize(marked.parse(text));
+    buildMdToc();
+  } else {
+    docContent.innerHTML = '';
+    text.split(/\r?\n/).forEach(line => {
+      const p = document.createElement('p');
+      p.textContent = line || '\u00A0';
+      docContent.appendChild(p);
+    });
+    setToc([]);
+  }
+}
+
+function buildMdToc() {
+  const items = [];
+  docContent.querySelectorAll('h1,h2,h3').forEach((h, i) => {
+    h.id = 'h-' + i;
+    items.push({
+      label: h.textContent, level: parseInt(h.tagName[1]),
+      go: () => h.scrollIntoView({ block: 'start' }),
+    });
+  });
+  setToc(items);
+}
+
+viewer.addEventListener('scroll', debounce(() => {
+  if (S.type !== 'txt' && S.type !== 'md') return;
+  const max = viewer.scrollHeight - viewer.clientHeight;
+  if (max <= 0) return;
+  const ratio = viewer.scrollTop / max;
+  progLabel.textContent = Math.round(ratio * 100) + '%';
+  seekBar.value = Math.round(ratio * 1000);
+  saveProgress({ ratio });
+}, 400));
+
+/* ═══════════════ 翻頁 ═══════════════ */
+function goPrev() {
+  if (S.type === 'pdf') renderPdfPage(S.pdf.page - 1);
+  else if (S.type === 'epub' && S.rendition) S.rendition.prev();
+}
+function goNext() {
+  if (S.type === 'pdf') renderPdfPage(S.pdf.page + 1);
+  else if (S.type === 'epub' && S.rendition) S.rendition.next();
+}
+navPrev.addEventListener('click', goPrev);
+navNext.addEventListener('click', goNext);
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'ArrowLeft') goPrev();
+  if (e.key === 'ArrowRight') goNext();
+});
+
+/* ═══════════════ 底部拉霸：快速跳轉 ═══════════════ */
+seekBar.addEventListener('input', () => {
+  if (S.type === 'pdf') progLabel.textContent = '第 ' + seekBar.value + ' 頁';
+  else progLabel.textContent = Math.round(seekBar.value / 10) + '%';
+});
+seekBar.addEventListener('change', () => {
+  const v = +seekBar.value;
+  if (S.type === 'pdf') renderPdfPage(v);
+  else if (S.type === 'epub' && S.rendition && S.book && S.book.locations && S.book.locations.length()) {
+    S.rendition.display(S.book.locations.cfiFromPercentage(v / 1000));
+  } else if (S.type === 'txt' || S.type === 'md') {
+    viewer.scrollTop = (v / 1000) * (viewer.scrollHeight - viewer.clientHeight);
+  }
+});
+
+/* ═══════════════ 觸控點按翻頁（PDF / EPUB）：左 1/3 上一頁、右 1/3 下一頁 ═══════════════
+   透明點按區蓋在外層，座標以螢幕為準，不受 EPUB iframe 內部位移影響 */
+const tapPrev = $('tapPrev'), tapNext = $('tapNext');
+function bindTapZone(el, fn) {
+  let x = 0, y = 0;
+  el.addEventListener('touchstart', e => {
+    const t = e.touches[0]; x = t.clientX; y = t.clientY;
+  }, { passive: true });
+  el.addEventListener('touchend', e => {
+    const t = e.changedTouches[0];
+    if (Math.abs(t.clientX - x) < 10 && Math.abs(t.clientY - y) < 10) fn();  // 有位移＝捲動，不翻頁
+  }, { passive: true });
+}
+bindTapZone(tapPrev, goPrev);
+bindTapZone(tapNext, goNext);
+
+/* ═══════════════ 沉浸模式：點中間切換工具列顯示 ═══════════════ */
+let zenHinted = false;
+function toggleZen() {
+  if (!S.type) return;
+  const on = document.body.classList.toggle('zen');
+  if (on && !zenHinted) { toast('沉浸閱讀中，點畫面中間可叫回工具列'); zenHinted = true; }
+  // 版面高度改變，通知 EPUB 引擎重排
+  if (S.rendition) setTimeout(() => { try { S.rendition.resize(); } catch (e) {} }, 60);
+}
+function bindMidTap(target) {
+  let x = 0, y = 0;
+  target.addEventListener('touchstart', e => {
+    const t = e.touches[0]; x = t.clientX; y = t.clientY;
+  }, { passive: true });
+  target.addEventListener('touchend', e => {
+    const t = e.changedTouches[0];
+    if (Math.abs(t.clientX - x) > 10 || Math.abs(t.clientY - y) > 10) return;  // 捲動不切換
+    if (e.target && e.target.closest && e.target.closest('a,button,input,select')) return;  // 點連結按鈕不切換
+    toggleZen();
+  }, { passive: true });
+}
+bindMidTap(viewer);  // PDF / TXT / MD 的中間區（左右點按區蓋住的部分不會傳進來）
+
+/* ═══════════════ 簡繁轉換（OpenCC，按需載入） ═══════════════ */
+let ccReady = false, ccT = null, ccS = null, ccLoading = null;
+function loadOpenCC() {
+  if (ccLoading) return ccLoading;
+  ccLoading = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.js';
+    s.onload = () => {
+      ccT = OpenCC.Converter({ from: 'cn', to: 'tw' });
+      ccS = OpenCC.Converter({ from: 'tw', to: 'cn' });
+      ccReady = true; res();
+    };
+    s.onerror = () => { ccLoading = null; rej(new Error('load fail')); };
+    document.head.appendChild(s);
+  });
+  return ccLoading;
+}
+const ccConvert = text => S.ccMode === 't' ? ccT(text) : S.ccMode === 's' ? ccS(text) : text;
+function convertDom(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    if (node.data.trim()) node.data = ccConvert(node.data);
+  }
+}
+
+$('ccSelect').addEventListener('change', async e => {
+  S.ccMode = e.target.value;
+  if (S.ccMode === 'off') {
+    if (S.type === 'txt' || S.type === 'md') renderTextContent();
+    else if (S.type === 'epub' && S.rendition) { toast('EPUB 重新翻頁後顯示原文'); S.rendition.display(S.rendition.location ? S.rendition.location.start.cfi : undefined); }
+    renderToc();
+    return;
+  }
+  if (S.type === 'pdf') { toast('PDF 為圖像渲染，無法簡繁轉換'); e.target.value = 'off'; S.ccMode = 'off'; return; }
+  if (!S.type) { toast('請先開啟檔案'); return; }
+  toast('載入轉換字典中…');
+  try {
+    await loadOpenCC();
+    if (S.type === 'txt' || S.type === 'md') renderTextContent();
+    else if (S.type === 'epub' && S.rendition) {
+      S.rendition.getContents().forEach(c => convertDom(c.document.body));
+    }
+    renderToc();
+    toast(S.ccMode === 't' ? '已轉換為繁體' : '已轉換為簡體');
+  } catch (err) {
+    toast('轉換字典載入失敗，請檢查網路');
+    e.target.value = 'off'; S.ccMode = 'off';
+  }
+});
+</script>
+</body>
+</html>
