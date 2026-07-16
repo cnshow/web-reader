@@ -2,46 +2,52 @@
 
 純前端的單檔網頁閱讀器，支援 **PDF / EPUB / TXT / Markdown**。所有檔案皆在瀏覽器本地解析，不會上傳到任何伺服器。
 
+**線上使用：<https://cnshow.github.io/web-reader/>**
+
 ## 功能
 
 **閱讀**
 - 開啟或拖放本地檔案閱讀（PDF、EPUB、TXT、MD）
-- 深色 / 淺色模式
+- 深色 / 淺色模式（EPUB 內文同步變色）
 - 字體大小調整（PDF 為縮放）
 - 目錄導航側欄（PDF 書籤、EPUB 章節、MD 標題），章節標題會跟隨簡繁模式顯示
 - 閱讀進度自動記憶（localStorage，依檔名＋檔案大小識別）
-- 文件內容簡繁轉換（OpenCC；PDF 因屬圖像渲染不支援）
+
+**簡繁轉換**
+- 一鍵智慧切換：自動偵測原文是簡體或繁體，按鈕直接顯示反向動作（「轉繁體」或「轉簡體」）
+- 再按一次立即還原原文，並停留在原本的閱讀位置
+- 使用 OpenCC 字典（按需載入）；PDF 因屬圖像渲染不支援
+
+**螢光筆筆記**
+- 選取內文文字，浮出三類標記：🎯 目標、⚡ 行動、💖 感動（對應黃、綠、粉螢光底色）
+- 點擊已標記的文字可刪除
+- 側欄「目錄｜筆記」頁籤：列出全部標記、點擊跳轉到原文位置、逐筆刪除
+- 一鍵匯出 Markdown 筆記檔（`- 🎯 摘錄` 格式）
+- 標記自動儲存（localStorage），重開同一檔案自動還原；簡繁切換後標記位置自動跟隨
+- 支援 EPUB / TXT / MD（PDF 無文字層不支援）
 
 **翻頁與導航**
 - 觸控點按翻頁：點畫面**左 1/3** 上一頁、**右 1/3** 下一頁（PDF / EPUB）
 - 沉浸閱讀模式：點畫面**中間 1/3** 隱藏上下工具列只留內文，再點一次恢復
 - 底部快速跳轉拉霸：PDF 按頁數、EPUB 按百分比（開書後需數秒計算定位）、TXT/MD 按捲動位置
-- 螢幕翻頁按鈕（手機版在左下、右下角）、鍵盤左右方向鍵翻頁
+- 螢幕翻頁按鈕（手機版在左下、右下角）、鍵盤左右方向鍵翻頁（焦點在 EPUB 內文中也有效）
 - PDF 可直接輸入頁碼跳頁
 
 **修復與相容性**
 - EPUB 自動修復：開啟時逐章檢查 XHTML 格式，壞掉的章節自動重建（網路流傳的書常見標籤錯誤導致無法渲染）
+- 側欄開關、沉浸模式切換後自動重排 EPUB 分頁與 PDF 縮放，版面不錯位
 - 響應式版面：手機版工具列單行化、觸控友善的操作配置
 
 ## 部署到 GitHub Pages
 
-1. 在 GitHub 建立一個新的 repository（例如 `reader`），設為 **Public**
-2. 上傳 `index.html`（和這份 `README.md`）：
-   - 網頁方式：在 repo 頁面點 **Add file → Upload files**，拖入檔案後 Commit
-   - 或用 git 指令：
-     ```bash
-     git init
-     git add index.html README.md
-     git commit -m "開卷閱讀器"
-     git branch -M main
-     git remote add origin https://github.com/<你的帳號>/reader.git
-     git push -u origin main
-     ```
-3. 進入 repo 的 **Settings → Pages**，Source 選 **Deploy from a branch**，Branch 選 `main` / `(root)`，按 Save
-4. 等待一兩分鐘後，即可在 `https://<你的帳號>.github.io/reader/` 遠端使用
+本專案即以此方式部署。若要自行部署：
+
+1. Fork 或建立新 repository，放入 `index.html`
+2. 進入 repo 的 **Settings → Pages**，Source 選 **Deploy from a branch**，Branch 選 `main` / `(root)`，按 Save
+3. 等待一兩分鐘後，即可在 `https://<你的帳號>.github.io/<repo 名稱>/` 使用
 
 ## 注意事項
 
 - 需要網路連線載入 CDN 函式庫（pdf.js、epub.js、marked、OpenCC 等）
 - TXT 檔以 UTF-8 編碼讀取；若為舊式 Big5/GBK 編碼可能出現亂碼，建議先轉存為 UTF-8
-- 閱讀進度儲存於各瀏覽器的 localStorage，換裝置或清除瀏覽資料後不會保留
+- 閱讀進度與螢光筆筆記儲存於各瀏覽器的 localStorage，換裝置或清除瀏覽資料後不會保留
