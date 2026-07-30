@@ -108,6 +108,33 @@ button{cursor:pointer;background:none;border:none}
 .note-item .del:hover{color:#C0392B}
 .empty-note{padding:16px;color:var(--muted);font-size:13px;line-height:1.7}
 
+/* ── 文件庫 ── */
+#libPanel{padding:4px 0}
+.lib-head{padding:12px 16px 10px;border-bottom:1px solid var(--border)}
+.lib-dir{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink);margin-bottom:8px;word-break:break-all}
+.lib-dir .ic{flex-shrink:0}
+.lib-actions{display:flex;gap:8px}
+.lib-actions button{
+  flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;
+  background:var(--surface);transition:background .15s,border-color .15s;
+}
+.lib-actions button:hover{background:var(--accent-soft);border-color:var(--accent)}
+.lib-actions button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.lib-actions button.primary:hover{filter:brightness(1.08)}
+.lib-group{
+  padding:11px 16px 4px;font-size:11px;letter-spacing:.08em;color:var(--muted);
+  word-break:break-all;
+}
+.lib-file{
+  display:flex;align-items:center;gap:8px;padding:8px 12px 8px 16px;cursor:pointer;
+  border-left:3px solid transparent;font-size:13.5px;line-height:1.4;
+}
+.lib-file:hover{background:var(--accent-soft)}
+.lib-file.active{border-left-color:var(--accent);background:var(--accent-soft);font-weight:500}
+.lib-file .ic{flex-shrink:0}
+.lib-file .fn{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lib-empty{padding:16px;color:var(--muted);font-size:13px;line-height:1.7}
+
 /* ── 螢光筆 ── */
 mark.hl{color:inherit;border-radius:2px;cursor:pointer}
 mark.hl[data-color="y"]{background:rgba(255,213,74,.45)}
@@ -156,7 +183,7 @@ body.dragging #viewer{outline:3px dashed var(--accent);outline-offset:-8px}
 /* TXT / MD */
 #docWrap{display:flex;justify-content:center;padding:32px 20px 80px}
 #docContent{
-  max-width:720px;width:100%;font-family:var(--font-read);
+  max-width:var(--read-width,860px);width:100%;font-family:var(--font-read);
   font-size:var(--read-size,18px);line-height:2;color:var(--ink);
 }
 #docContent p{margin-bottom:1em}
@@ -252,11 +279,12 @@ body.zen #topbar, body.zen #statusbar, body.zen .pagenav{display:none}
     <div><h1>開卷</h1><p>本地文件閱讀器 · PDF / EPUB / TXT / MD</p></div>
   </div>
   <div class="controls">
-    <button id="tocBtn" class="ctl" title="顯示或隱藏目錄與筆記側欄">目錄/筆記</button>
+    <button id="tocBtn" class="ctl" title="顯示或隱藏側欄（目錄 / 筆記 / 文件庫）">目錄/筆記</button>
     <div class="seg" role="group" aria-label="字體大小">
       <button id="fontDec" title="縮小字體">A−</button>
       <button id="fontInc" title="放大字體">A＋</button>
     </div>
+    <button id="widthBtn" class="ctl" title="內文欄寬（僅影響 TXT / MD 桌面顯示）">↔ 中</button>
     <button id="ccBtn" class="ctl" title="簡繁轉換：自動偵測原文，按一下切換（不支援 PDF）">轉繁體</button>
     <button id="themeBtn" class="ctl" title="切換深色模式">深色</button>
     <label class="open-btn">開啟檔案
@@ -270,9 +298,11 @@ body.zen #topbar, body.zen #statusbar, body.zen .pagenav{display:none}
     <div class="side-tabs">
       <button id="tabToc" class="active">目 錄</button>
       <button id="tabNotes">筆 記</button>
+      <button id="tabLib">文件庫</button>
     </div>
     <nav id="tocList"></nav>
     <div id="noteList" hidden></div>
+    <div id="libPanel" hidden></div>
   </aside>
   <main id="viewerShell">
     <div id="viewer">
@@ -355,7 +385,7 @@ const $ = id => document.getElementById(id);
 const viewer = $('viewer'), emptyState = $('emptyState'),
   pdfWrap = $('pdfWrap'), pdfCanvas = $('pdfCanvas'),
   epubWrap = $('epubWrap'), docWrap = $('docWrap'), docContent = $('docContent'),
-  tocList = $('tocList'), sidebar = $('sidebar'),
+  tocList = $('tocList'), sidebar = $('sidebar'), libPanel = $('libPanel'),
   navPrev = $('navPrev'), navNext = $('navNext'),
   fileLabel = $('fileLabel'), pageCtrl = $('pageCtrl'),
   pageInput = $('pageInput'), pageTotal = $('pageTotal'), progLabel = $('progLabel'),
@@ -407,6 +437,32 @@ function stepSize(dir) {
 $('fontInc').addEventListener('click', () => stepSize(1));
 $('fontDec').addEventListener('click', () => stepSize(-1));
 applyFontSize();
+
+/* ═══════════════ 內文欄寬（TXT / MD） ═══════════════
+   只影響桌面：手機螢幕本就 < max-width，永遠滿版不受影響。
+   循環 窄720 / 中860 / 寬1040，設定記憶於 localStorage。 */
+const READ_WIDTHS = [
+  { key: 'narrow', label: '窄', px: 720 },
+  { key: 'mid', label: '中', px: 860 },
+  { key: 'wide', label: '寬', px: 1040 },
+];
+let readWidthIdx = (() => {
+  const i = READ_WIDTHS.findIndex(w => w.key === store.get('reader:readWidth'));
+  return i >= 0 ? i : 1;   // 預設「中」860px
+})();
+function applyReadWidth() {
+  const w = READ_WIDTHS[readWidthIdx];
+  document.documentElement.style.setProperty('--read-width', w.px + 'px');
+  $('widthBtn').textContent = '↔ ' + w.label;
+  $('widthBtn').title = `內文欄寬：${w.label}（${w.px}px，僅影響 TXT / MD 桌面顯示）`;
+  store.set('reader:readWidth', w.key);
+}
+$('widthBtn').addEventListener('click', () => {
+  readWidthIdx = (readWidthIdx + 1) % READ_WIDTHS.length;
+  applyReadWidth();
+  toast('內文欄寬：' + READ_WIDTHS[readWidthIdx].label + '（' + READ_WIDTHS[readWidthIdx].px + 'px）');
+});
+applyReadWidth();
 
 /* ═══════════════ 目錄側欄 ═══════════════ */
 /* 版面寬度改變（側欄開關、沉浸模式）後，分頁引擎不會自己發現，須通知重排 */
@@ -985,11 +1041,14 @@ hlDel.addEventListener('click', () => { if (pendingDelId) removeHighlight(pendin
 function switchSideTab(tab) {
   $('tabToc').classList.toggle('active', tab === 'toc');
   $('tabNotes').classList.toggle('active', tab === 'notes');
+  $('tabLib').classList.toggle('active', tab === 'lib');
   tocList.hidden = tab !== 'toc';
   noteList.hidden = tab !== 'notes';
+  libPanel.hidden = tab !== 'lib';
 }
 $('tabToc').addEventListener('click', () => switchSideTab('toc'));
 $('tabNotes').addEventListener('click', () => switchSideTab('notes'));
+$('tabLib').addEventListener('click', () => switchSideTab('lib'));
 
 function renderNotes() {
   noteList.innerHTML = '';
@@ -1047,6 +1106,208 @@ function exportNotes() {
   toast('已匯出筆記');
 }
 renderNotes();
+
+/* ═══════════════ 文件庫（File System Access API） ═══════════════
+   選一次目錄即記住（handle 存 IndexedDB），下次回來按「重新授權」即可列出，
+   不必每次逐一開檔。點檔案 → getFile() → 丟給既有 openFile()，進度／螢光筆全沿用。
+   僅 Chromium 系瀏覽器（Chrome / Edge）支援。 */
+const LIB_EXT = ['md', 'markdown', 'txt', 'pdf', 'epub'];
+const LIB_ICON = { md: '📄', markdown: '📄', txt: '📃', pdf: '📕', epub: '📗' };
+const fsSupported = typeof window.showDirectoryPicker === 'function';
+const LIB = { dirHandle: null, files: [], activeKey: null };
+
+/* ── 極簡 IDB：只存目錄 handle 一筆（handle 無法字串化，不能放 localStorage） ── */
+const idb = {
+  _db: null,
+  open() {
+    if (!this._db) this._db = new Promise((res, rej) => {
+      const r = indexedDB.open('reader-lib', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    return this._db;
+  },
+  async get(key) {
+    const db = await this.open();
+    return new Promise((res, rej) => {
+      const t = db.transaction('kv', 'readonly').objectStore('kv').get(key);
+      t.onsuccess = () => res(t.result); t.onerror = () => rej(t.error);
+    });
+  },
+  async set(key, val) {
+    const db = await this.open();
+    return new Promise((res, rej) => {
+      const t = db.transaction('kv', 'readwrite').objectStore('kv').put(val, key);
+      t.onsuccess = () => res(); t.onerror = () => rej(t.error);
+    });
+  },
+};
+
+/* ── 遞迴掃描目錄，收集支援格式的檔案 ── */
+async function scanDir(dirHandle, prefix, out) {
+  for await (const entry of dirHandle.values()) {
+    if (entry.kind === 'file') {
+      const ext = entry.name.split('.').pop().toLowerCase();
+      if (LIB_EXT.includes(ext)) out.push({ name: entry.name, folder: prefix, ext, handle: entry });
+    } else if (entry.kind === 'directory') {
+      await scanDir(entry, prefix ? prefix + '/' + entry.name : entry.name, out);
+    }
+  }
+}
+
+async function refreshLibrary() {
+  if (!LIB.dirHandle) { renderLibrary(); return; }
+  try {
+    const out = [];
+    await scanDir(LIB.dirHandle, '', out);
+    out.sort((a, b) =>
+      a.folder.localeCompare(b.folder, 'zh-Hant') || a.name.localeCompare(b.name, 'zh-Hant'));
+    LIB.files = out;
+    renderLibrary();
+  } catch (err) {
+    console.error(err);
+    LIB.files = [];
+    renderLibrary('目錄讀取失敗，可能已被移動或刪除，請重新選擇目錄。');
+  }
+}
+
+/* ── 建立頂部：目錄名 + 動作按鈕 ── */
+function libHead(reauthHandle) {
+  const head = document.createElement('div');
+  head.className = 'lib-head';
+  const name = reauthHandle ? reauthHandle.name : (LIB.dirHandle && LIB.dirHandle.name);
+  if (name) {
+    const dir = document.createElement('div');
+    dir.className = 'lib-dir';
+    dir.innerHTML = '<span class="ic">📂</span>';
+    const nm = document.createElement('span'); nm.textContent = name;
+    dir.appendChild(nm); head.appendChild(dir);
+  }
+  const acts = document.createElement('div');
+  acts.className = 'lib-actions';
+  if (reauthHandle) {
+    const auth = document.createElement('button');
+    auth.className = 'primary'; auth.textContent = '重新授權';
+    auth.addEventListener('click', async () => {
+      const perm = await reauthHandle.requestPermission({ mode: 'read' }).catch(() => 'denied');
+      if (perm === 'granted') { LIB.dirHandle = reauthHandle; await refreshLibrary(); }
+      else toast('未取得目錄權限');
+    });
+    acts.appendChild(auth);
+  } else {
+    const pick = document.createElement('button');
+    pick.className = 'primary';
+    pick.textContent = LIB.dirHandle ? '更換目錄' : '選擇文件目錄';
+    pick.addEventListener('click', pickDirectory);
+    acts.appendChild(pick);
+  }
+  if (LIB.dirHandle && !reauthHandle) {
+    const rf = document.createElement('button');
+    rf.textContent = '重新整理';
+    rf.addEventListener('click', refreshLibrary);
+    acts.appendChild(rf);
+  }
+  if (reauthHandle) {
+    const change = document.createElement('button');
+    change.textContent = '更換目錄';
+    change.addEventListener('click', pickDirectory);
+    acts.appendChild(change);
+  }
+  head.appendChild(acts);
+  return head;
+}
+
+function libEmpty(msg) {
+  const d = document.createElement('div');
+  d.className = 'lib-empty'; d.textContent = msg;
+  return d;
+}
+
+function renderLibrary(errMsg) {
+  libPanel.innerHTML = '';
+  if (!fsSupported) {
+    libPanel.appendChild(libEmpty(
+      '文件庫需要 File System Access API，目前僅 Chrome / Edge 等 Chromium 系瀏覽器支援。'));
+    return;
+  }
+  libPanel.appendChild(libHead());
+  if (errMsg) { libPanel.appendChild(libEmpty(errMsg)); return; }
+  if (!LIB.dirHandle) {
+    libPanel.appendChild(libEmpty(
+      '選擇一個存放文件的目錄，之後每次回來都能直接從這裡挑檔案閱讀，不必再逐一開啟。'));
+    return;
+  }
+  if (!LIB.files.length) {
+    libPanel.appendChild(libEmpty('此目錄沒有支援的文件（.md / .txt / .pdf / .epub）。'));
+    return;
+  }
+  let curFolder = null;
+  LIB.files.forEach(f => {
+    if (f.folder !== curFolder) {
+      curFolder = f.folder;
+      const g = document.createElement('div');
+      g.className = 'lib-group';
+      g.textContent = '📁 ' + (curFolder || '（根目錄）');
+      libPanel.appendChild(g);
+    }
+    const key = f.folder + '/' + f.name;
+    const row = document.createElement('div');
+    row.className = 'lib-file' + (key === LIB.activeKey ? ' active' : '');
+    row.innerHTML = `<span class="ic">${LIB_ICON[f.ext] || '📄'}</span>`;
+    const fn = document.createElement('span');
+    fn.className = 'fn'; fn.textContent = f.name; fn.title = f.name;
+    row.appendChild(fn);
+    row.addEventListener('click', () => openFromLibrary(f, key));
+    libPanel.appendChild(row);
+  });
+}
+
+async function openFromLibrary(f, key) {
+  try {
+    const file = await f.handle.getFile();
+    LIB.activeKey = key;
+    renderLibrary();
+    openFile(file);
+    if (window.innerWidth <= 720) sidebar.classList.remove('open');
+  } catch (err) {
+    console.error(err);
+    toast('無法開啟此檔案，請按「重新整理」後再試');
+  }
+}
+
+async function pickDirectory() {
+  if (!fsSupported) return;
+  try {
+    const handle = await window.showDirectoryPicker();
+    LIB.dirHandle = handle; LIB.activeKey = null;
+    try { await idb.set('libDir', handle); } catch (e) { console.warn('目錄記憶失敗：', e); }
+    await refreshLibrary();
+    toast('已設定文件目錄：' + handle.name);
+  } catch (err) {
+    if (err && err.name === 'AbortError') return;   // 使用者取消選取
+    console.error(err);
+    toast('選取目錄失敗');
+  }
+}
+
+/* ── 載入時還原上次的目錄 handle ── */
+async function initLibrary() {
+  if (!fsSupported) { renderLibrary(); return; }
+  let handle = null;
+  try { handle = await idb.get('libDir'); } catch (e) {}
+  if (!handle) { renderLibrary(); return; }
+  const perm = await handle.queryPermission({ mode: 'read' }).catch(() => 'prompt');
+  if (perm === 'granted') { LIB.dirHandle = handle; refreshLibrary(); }
+  else {
+    // 權限過期（重開瀏覽器）：瀏覽器規定必須由使用者點擊才能重新授權
+    libPanel.innerHTML = '';
+    libPanel.appendChild(libHead(handle));
+    libPanel.appendChild(libEmpty(
+      `已記住上次的目錄「${handle.name}」，瀏覽器需要你按一下「重新授權」才能再次讀取。`));
+  }
+}
+initLibrary();
 
 /* ═══════════════ 簡繁轉換（OpenCC，按需載入） ═══════════════ */
 let ccReady = false, ccT = null, ccS = null, ccLoading = null;
