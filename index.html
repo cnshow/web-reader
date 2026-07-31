@@ -6,6 +6,7 @@
 <title>開卷 · 本地文件閱讀器</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@400;600;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
 <style>
 :root{
   --bg:#EFF1EF; --surface:#FFFFFF; --ink:#22272B; --muted:#66707A;
@@ -348,6 +349,7 @@ body.zen #topbar, body.zen #statusbar, body.zen .pagenav{display:none}
 <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
 <script>
 /* ═══════════════ 開卷 · 核心邏輯 ═══════════════ */
 pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -732,7 +734,7 @@ function renderTextContent() {
   let text = S.rawText;
   if (S.ccMode !== 'off' && ccReady) text = ccConvert(text);
   if (S.type === 'md') {
-    docContent.innerHTML = DOMPurify.sanitize(marked.parse(text));
+    docContent.innerHTML = renderMarkdownWithMath(text);
     buildMdToc();
   } else {
     docContent.innerHTML = '';
@@ -744,6 +746,34 @@ function renderTextContent() {
     setToc([]);
   }
   applyDocHighlights();
+}
+
+/* 先把 $$…$$ 公式抽出保護，跑完 marked/DOMPurify 後再塞回 KaTeX 排版。
+   直接讓 marked 處理會把公式裡的 \、_、* 當成 Markdown 語法吃掉，故必須先抽離。 */
+function renderMarkdownWithMath(text) {
+  const blocks = [];
+  // 佔位符只含英數與底線，marked 與 DOMPurify 都不會改動它
+  const protectedText = text.replace(/\$\$([\s\S]+?)\$\$/g, (_m, tex) => {
+    blocks.push(tex);
+    return '\n\n@@KATEX_BLOCK_' + (blocks.length - 1) + '@@\n\n';
+  });
+  let html = DOMPurify.sanitize(marked.parse(protectedText));
+  if (!blocks.length) return html;
+
+  const canRender = typeof katex !== 'undefined';
+  const restore = idx => {
+    const tex = blocks[idx];
+    if (!canRender) return '$$' + tex + '$$';                 // KaTeX 未載入時退回原文
+    try {
+      return katex.renderToString(tex, { displayMode: true, throwOnError: false });
+    } catch (err) {
+      return '$$' + tex + '$$';
+    }
+  };
+  // marked 通常把獨立佔位符包成 <p>…</p>，一併換掉以免 katex-display 巢狀於 <p>
+  html = html.replace(/<p>\s*@@KATEX_BLOCK_(\d+)@@\s*<\/p>/g, (_m, i) => restore(+i));
+  html = html.replace(/@@KATEX_BLOCK_(\d+)@@/g, (_m, i) => restore(+i));
+  return html;
 }
 
 function buildMdToc() {
