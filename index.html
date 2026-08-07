@@ -205,6 +205,19 @@ body.dragging #viewer{outline:3px dashed var(--accent);outline-offset:-8px}
 #docContent th,#docContent td{border:1px solid var(--border);padding:6px 10px;font-size:.9em}
 #docContent hr{border:none;border-top:1px solid var(--border);margin:2em 0}
 
+/* Mermaid 圖表 */
+#docContent .mermaid-block{margin:0 0 1.4em;text-align:center;overflow-x:auto;line-height:normal}
+#docContent .mermaid-block svg{max-width:100%;height:auto}
+#docContent .mermaid-block.pending{
+  font-family:var(--font-ui);font-size:.85em;color:var(--muted);
+  padding:16px 0;line-height:1.6;
+}
+#docContent .mermaid-block.failed{text-align:left}
+#docContent .mermaid-block .mermaid-err{
+  font-family:var(--font-ui);font-size:.8em;color:#C0392B;margin-bottom:6px;line-height:1.6;
+}
+html[data-theme="dark"] #docContent .mermaid-block .mermaid-err{color:#F1948A}
+
 /* 沉浸閱讀模式：隱藏所有工具列，只留內容 */
 body.zen #topbar, body.zen #statusbar, body.zen .pagenav{display:none}
 
@@ -415,8 +428,10 @@ function applyEpubTheme() {
   S.rendition.themes.override('color', cs.getPropertyValue('--ink').trim());
   S.rendition.themes.override('background', cs.getPropertyValue('--surface').trim());
 }
-$('themeBtn').addEventListener('click', () =>
-  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+$('themeBtn').addEventListener('click', () => {
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+  refreshMermaidTheme();   // 掛在按鈕而非 applyTheme：初次套用主題時 mermaid 的狀態變數尚未初始化
+});
 applyTheme(store.get('reader:theme') || 'light');
 
 /* ═══════════════ 字體大小 / PDF 縮放 ═══════════════ */
@@ -523,6 +538,7 @@ function resetViewer() {
   navPrev.hidden = navNext.hidden = pageCtrl.hidden = true;
   tapPrev.hidden = tapNext.hidden = true;
   epubWrap.innerHTML = ''; docContent.innerHTML = '';
+  mmdSeq++;                                              // 作廢前一份文件仍在排隊的圖表繪製
   S.ccMode = 'off'; S.ccDetected = null; updateCcBtn();  // 換檔重新偵測字體
   S.highlights = []; hideHlPop(); renderNotes();
   progLabel.textContent = ''; setToc([]);
@@ -735,6 +751,7 @@ function renderTextContent() {
   if (S.ccMode !== 'off' && ccReady) text = ccConvert(text);
   if (S.type === 'md') {
     docContent.innerHTML = renderMarkdownWithMath(text);
+    prepareMermaidBlocks();
     buildMdToc();
   } else {
     docContent.innerHTML = '';
@@ -746,6 +763,7 @@ function renderTextContent() {
     setToc([]);
   }
   applyDocHighlights();
+  renderMermaidBlocks();
 }
 
 /* 先把 $$…$$ 公式抽出保護，跑完 marked/DOMPurify 後再塞回 KaTeX 排版。
@@ -774,6 +792,98 @@ function renderMarkdownWithMath(text) {
   html = html.replace(/<p>\s*@@KATEX_BLOCK_(\d+)@@\s*<\/p>/g, (_m, i) => restore(+i));
   html = html.replace(/@@KATEX_BLOCK_(\d+)@@/g, (_m, i) => restore(+i));
   return html;
+}
+
+/* ═══════════════ Mermaid 圖表（按需載入） ═══════════════
+   完整包約 3.5 MB，只在文件真的出現 ```mermaid 區塊時才下載 */
+const MERMAID_SRC = 'https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.min.js';
+let mmdLoading = null, mmdSeq = 0, mmdUid = 0;
+
+function mermaidConfig() {
+  return {
+    startOnLoad: false,
+    securityLevel: 'strict',   // 標籤內的 HTML 一律跳脫，文件無法夾帶腳本
+    theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default',
+    fontFamily: "'Noto Sans TC',-apple-system,'PingFang TC','Microsoft JhengHei',sans-serif",
+  };
+}
+function loadMermaid() {
+  if (mmdLoading) return mmdLoading;
+  mmdLoading = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = MERMAID_SRC;
+    s.onload = () => { mermaid.initialize(mermaidConfig()); res(); };
+    s.onerror = () => { mmdLoading = null; rej(new Error('load fail')); };
+    document.head.appendChild(s);
+  });
+  return mmdLoading;
+}
+
+/* marked 產出的 <pre><code class="language-mermaid"> 先原地換成同層的 <div>：
+   螢光筆靠 docContent.children 的索引定位，必須 1 換 1 才不會位移 */
+function prepareMermaidBlocks() {
+  docContent.querySelectorAll('pre > code.language-mermaid').forEach(code => {
+    const div = document.createElement('div');
+    div.className = 'mermaid-block pending';
+    div.dataset.mmd = code.textContent;
+    div.textContent = '圖表繪製中…';
+    code.parentElement.replaceWith(div);
+  });
+}
+
+async function renderMermaidBlocks() {
+  const blocks = [...docContent.querySelectorAll('.mermaid-block')];
+  if (!blocks.length) return;
+  const seq = ++mmdSeq;                        // 換檔或切主題時，作廢仍在進行中的繪製
+  try {
+    await loadMermaid();
+  } catch (err) {
+    blocks.forEach(b => failMermaid(b, '圖表元件載入失敗，請檢查網路連線'));
+    return;
+  }
+  for (const b of blocks) {
+    if (seq !== mmdSeq) return;
+    const id = 'mmd-' + (++mmdUid);
+    try {
+      const { svg } = await mermaid.render(id, b.dataset.mmd || '');
+      if (seq !== mmdSeq) return;
+      b.className = 'mermaid-block';
+      b.innerHTML = svg;
+    } catch (err) {
+      if (seq !== mmdSeq) return;
+      const msg = err && err.message ? err.message.split('\n')[0] : '無法解析';
+      failMermaid(b, 'Mermaid 語法錯誤：' + msg);
+    } finally {
+      // 語法錯誤時 mermaid 會留下量測用的暫存節點，手動清掉
+      const tmp = document.getElementById('d' + id);
+      if (tmp) tmp.remove();
+    }
+  }
+}
+
+/* 畫不出來就退回顯示原始碼，讀者至少看得到圖的內容 */
+function failMermaid(block, msg) {
+  block.className = 'mermaid-block failed';
+  block.innerHTML = '';
+  const note = document.createElement('div');
+  note.className = 'mermaid-err';
+  note.textContent = msg;
+  const pre = document.createElement('pre');
+  pre.textContent = block.dataset.mmd || '';
+  block.append(note, pre);
+}
+
+/* mermaid 的配色是繪製當下烘進 SVG 的，切換深淺色必須整批重畫 */
+function refreshMermaidTheme() {
+  if (!mmdLoading || !docContent.querySelector('.mermaid-block')) return;
+  mmdLoading.then(() => {
+    mermaid.initialize(mermaidConfig());
+    docContent.querySelectorAll('.mermaid-block').forEach(b => {
+      b.className = 'mermaid-block pending';
+      b.textContent = '圖表繪製中…';
+    });
+    renderMermaidBlocks();
+  }).catch(() => {});
 }
 
 function buildMdToc() {
