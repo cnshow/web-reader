@@ -283,6 +283,31 @@ body.zen #topbar, body.zen #statusbar, body.zen .pagenav{display:none}
   *{transition:none!important}
   #viewer{scroll-behavior:auto}
 }
+
+/* ── 輸出 PDF（走瀏覽器列印）───────────────
+   #viewer 是 overflow:auto 的捲動容器，不解除高度限制就只會印出當下那一屏 */
+@media print{
+  /* 紙本一律白底黑字，畫面在深色模式時也一樣 */
+  :root,html[data-theme="dark"]{
+    --bg:#FFFFFF; --surface:#FFFFFF; --ink:#111111; --muted:#555555;
+    --accent:#2E6E5E; --accent-soft:#EFEFEF; --border:#BBBBBB; --shadow:none;
+  }
+  @page{margin:18mm 16mm}
+  html,body{height:auto;overflow:visible;background:#fff}
+  #topbar,#statusbar,#sidebar,.pagenav,.tapzone,#toast,#hlPop,#emptyState{display:none!important}
+  #layout,#viewerShell{display:block;min-height:0}
+  #viewer{overflow:visible;position:static;height:auto}
+  #docWrap{display:block;padding:0}
+  /* 字級走紙張尺寸，不沿用畫面上的 px（inline style 需要 !important 才蓋得掉） */
+  #docContent{max-width:none;width:100%;font-size:12pt!important;line-height:1.9;color:#111}
+  #docContent > :first-child{margin-top:0}   /* 首頁不要在頁邊距外再空一大截 */
+  #docContent h1,#docContent h2,#docContent h3,#docContent h4{break-after:avoid}
+  #docContent pre,#docContent table,#docContent img,
+  #docContent blockquote,#docContent .mermaid-block,#docContent .katex-display{break-inside:avoid}
+  #docContent a{color:#111;text-decoration:underline}
+  /* 螢光筆底色：瀏覽器預設會捨棄背景色，必須明講要保留 */
+  mark.hl{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
 </style>
 </head>
 <body>
@@ -301,6 +326,7 @@ body.zen #topbar, body.zen #statusbar, body.zen .pagenav{display:none}
     <button id="widthBtn" class="ctl" title="內文欄寬（僅影響 TXT / MD 桌面顯示）">↔ 中</button>
     <button id="ccBtn" class="ctl" title="簡繁轉換：自動偵測原文，按一下切換（不支援 PDF）">轉繁體</button>
     <button id="themeBtn" class="ctl" title="切換深色模式">深色</button>
+    <button id="pdfBtn" class="ctl" title="輸出 PDF：開啟列印對話框，目的地選「另存為 PDF」（僅 TXT / MD）">輸出 PDF</button>
     <label class="open-btn">開啟檔案
       <input type="file" id="fileInput" hidden accept=".pdf,.epub,.txt,.md,.markdown">
     </label>
@@ -799,11 +825,11 @@ function renderMarkdownWithMath(text) {
 const MERMAID_SRC = 'https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.min.js';
 let mmdLoading = null, mmdSeq = 0, mmdUid = 0;
 
-function mermaidConfig() {
+function mermaidConfig(theme) {
   return {
     startOnLoad: false,
     securityLevel: 'strict',   // 標籤內的 HTML 一律跳脫，文件無法夾帶腳本
-    theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default',
+    theme: theme || (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default'),
     fontFamily: "'Noto Sans TC',-apple-system,'PingFang TC','Microsoft JhengHei',sans-serif",
   };
 }
@@ -873,18 +899,46 @@ function failMermaid(block, msg) {
   block.append(note, pre);
 }
 
-/* mermaid 的配色是繪製當下烘進 SVG 的，切換深淺色必須整批重畫 */
-function refreshMermaidTheme() {
-  if (!mmdLoading || !docContent.querySelector('.mermaid-block')) return;
-  mmdLoading.then(() => {
-    mermaid.initialize(mermaidConfig());
+/* mermaid 的配色是繪製當下烘進 SVG 的，切換深淺色（或列印）必須整批重畫。
+   theme 省略時跟著當前介面主題走 */
+function redrawMermaid(theme) {
+  if (!docContent.querySelector('.mermaid-block') || !mmdLoading) return Promise.resolve();
+  return mmdLoading.then(() => {
+    mermaid.initialize(mermaidConfig(theme));
     docContent.querySelectorAll('.mermaid-block').forEach(b => {
       b.className = 'mermaid-block pending';
       b.textContent = '圖表繪製中…';
     });
-    renderMermaidBlocks();
+    return renderMermaidBlocks();
   }).catch(() => {});
 }
+const refreshMermaidTheme = () => redrawMermaid();
+
+/* ═══════════════ 輸出 PDF ═══════════════
+   走瀏覽器列印而非 jsPDF/html2canvas：不必多背一個函式庫，輸出的是可選取的向量
+   文字（中文直接用系統字型，免嵌入好幾 MB 的 CJK 字型），Mermaid 的 SVG 與 KaTeX
+   公式也能原樣印出。版面規則見 @media print。 */
+async function exportPdf() {
+  if (S.type !== 'txt' && S.type !== 'md') {
+    toast(S.type ? '目前只有 TXT / Markdown 可以輸出 PDF' : '請先開啟檔案');
+    return;
+  }
+  // @media print 會把版面轉成白底，但 mermaid 的配色是烘進 SVG 的：
+  // 深色主題不重繪就會印出淺色線條配白紙，等於看不見
+  const wasDark = document.documentElement.dataset.theme === 'dark';
+  if (wasDark) {
+    toast('正在準備列印版面…');
+    await redrawMermaid('default');
+  }
+  const title = document.title;
+  document.title = (fileLabel.textContent || '文件').replace(/\.[^.]+$/, '');  // 多數瀏覽器拿它當預設檔名
+  window.addEventListener('afterprint', () => {
+    document.title = title;
+    if (wasDark) redrawMermaid();
+  }, { once: true });
+  window.print();
+}
+$('pdfBtn').addEventListener('click', e => { e.target.blur(); exportPdf(); });
 
 function buildMdToc() {
   const items = [];
